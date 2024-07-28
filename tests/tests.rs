@@ -1,12 +1,10 @@
-extern crate two_timer;
-use two_timer::{parsable, parse, Config, TimeError};
-extern crate chrono;
-use chrono::naive::NaiveDate;
-use chrono::{Duration, Local, NaiveDateTime};
+use jiffy_two_timer::{parsable, parse, Config, TimeError};
+use jiff::naive::NaiveDate;
+use jiff::{Duration, Local, NaiveDateTime};
 
 // a debugging method to print out the parse tree
 // fn show_me(p: &str) {
-//     println!("{}", two_timer::MATCHER.parse(p).unwrap());
+//     println!("{}", jiffy_two_timer::MATCHER.parse(p).unwrap());
 // }
 
 #[test]

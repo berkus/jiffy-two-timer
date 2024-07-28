@@ -1,6 +1,6 @@
-extern crate two_timer;
+use jiffy_two_timer::MATCHER;
 
 // for timing the cost savings of using a serialized matcher
 fn main() {
-    two_timer::MATCHER.parse("yesterday");
+    MATCHER.parse("yesterday");
 }

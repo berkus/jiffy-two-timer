@@ -13,10 +13,8 @@ separated by a preposition such as "to", "through", "up to", or "until".
 # Example
 
 ```rust
-extern crate two_timer;
-use two_timer::{parse, Config};
-extern crate chrono;
-use chrono::naive::NaiveDate;
+use jiffy_two_timer::{parse, Config};
+use jiff::civil::DateTime;
 
 pub fn main() {
     let phrases = [
@@ -44,7 +42,7 @@ pub fn main() {
             Err(e) => println!("{:?}", e),
         }
     }
-    let now = NaiveDate::from_ymd_opt(1066, 10, 14).unwrap().and_hms(12, 30, 15);
+    let now = civil::Date::from_ymd_opt(1066, 10, 14).unwrap().and_hms(12, 30, 15);
     println!("\nlet \"now\" be some moment during the Battle of Hastings, specifically {}\n", now);
     let conf = Config::new().now(now);
     for phrase in phrases.iter() {
@@ -179,7 +177,7 @@ The potential unit separators are `/`, `.`, and `-`. Whitespace is optional.
 
 # Timezones
 
-At the moment `two_timer` only produces "naive" times. Sorry about that.
+At the moment `two_timer` only produces "civil" times. Sorry about that.
 
 # Optional Features
 
@@ -220,374 +218,369 @@ only the typical expressions used with JobLog, falling back on the full grammar 
 */
 
 #![recursion_limit = "1024"]
-#[macro_use]
-extern crate pidgin;
-#[macro_use]
-extern crate lazy_static;
-extern crate chrono;
-extern crate serde_json;
-use chrono::naive::{NaiveDate, NaiveDateTime};
-use chrono::{Datelike, Duration, Local, Timelike, Weekday};
-use pidgin::{Grammar, Match, Matcher};
+
+use std::sync::LazyLock;
+// chrono::naive::{NaiveDate, NaiveDateTime}
+// -> jiff::civil::date
+use jiff::civil::{self, date, Weekday};
+// chrono::{Datelike, Duration, Local, Timelike, Weekday}
+// -> jiff::civil::{Weekday}
+//use jiff::{Datelike, Duration, Local, Timelike, Weekday};
+use pidgin::{grammar, Grammar, Match, Matcher};
 use regex::Regex;
 
-lazy_static! {
-    // making this public is useful for testing, but best to keep it hidden to
-    // limit complexity and commitment
-    #[doc(hidden)]
-    pub static ref GRAMMAR: Grammar = grammar!{
-        (?ibBw)
+// making this public is useful for testing, but best to keep it hidden to
+// limit complexity and commitment
+#[doc(hidden)]
+pub static GRAMMAR: LazyLock<Grammar> = LazyLock::new(|| { grammar!{
+    (?ibBw)
 
-        TOP -> r(r"\A") <time_expression> r(r"\z")
+    TOP -> r(r"\A") <time_expression> r(r"\z")
 
-        // non-terminal patterns
-        // these are roughly ordered by dependency
+    // non-terminal patterns
+    // these are roughly ordered by dependency
 
-        time_expression => <universal> | <particular>
+    time_expression => <universal> | <particular>
 
-        particular => <one_time> | <two_times>
+    particular => <one_time> | <two_times>
 
-        one_time => <moment_or_period>
+    one_time => <moment_or_period>
 
-        two_times -> ("from")? <moment_or_period> <to> <moment_or_period> | <since_time>
+    two_times -> ("from")? <moment_or_period> <to> <moment_or_period> | <since_time>
 
-        since_time -> <since> <clusivity>? <moment_or_period>
+    since_time -> <since> <clusivity>? <moment_or_period>
 
-        clusivity -> ("the") <terminus> ("of")
+    clusivity -> ("the") <terminus> ("of")
 
-        terminus => <beginning> | <end>
+    terminus => <beginning> | <end>
 
-        to => <up_to> | <through>
+    to => <up_to> | <through>
 
-        moment_or_period => <moment> | <period>
+    moment_or_period => <moment> | <period>
 
-        period => <named_period> | <specific_period>
+    period => <named_period> | <specific_period>
 
-        specific_period => <modified_period> | <month_and_year> | <year> | <relative_period>
+    specific_period => <modified_period> | <month_and_year> | <year> | <relative_period>
 
-        modified_period -> <modifier>? <modifiable_period>
+    modified_period -> <modifier>? <modifiable_period>
 
-        modifiable_period => [["week", "month", "year", "pay period", "payperiod", "pp", "weekend"]] | <a_month> | <a_day>
+    modifiable_period => [["week", "month", "year", "pay period", "payperiod", "pp", "weekend"]] | <a_month> | <a_day>
 
-        month_and_year -> <a_month> <year>
+    month_and_year -> <a_month> <year>
 
-        year => <short_year> | ("-")? <n_year>
-        year -> <suffix_year> <year_suffix>
+    year => <short_year> | ("-")? <n_year>
+    year -> <suffix_year> <year_suffix>
 
-        year_suffix => <ce> | <bce>
+    year_suffix => <ce> | <bce>
 
-        relative_period -> <count> <displacement> <from_now_or_ago>
+    relative_period -> <count> <displacement> <from_now_or_ago>
 
-        count => r(r"[1-9][0-9]*") | <a_count>
+    count => r(r"[1-9][0-9]*") | <a_count>
 
-        named_period => <a_day> | <a_month>
+    named_period => <a_day> | <a_month>
 
-        moment -> <adjustment>? <point_in_time>
+    moment -> <adjustment>? <point_in_time>
 
-        adjustment -> <amount> <direction> // two minutes before
+    adjustment -> <amount> <direction> // two minutes before
 
-        amount -> <count> <unit>
+    amount -> <count> <unit>
 
-        point_in_time -> <at_time_on>? <some_day> <at_time>? | <specific_time> | <time>
+    point_in_time -> <at_time_on>? <some_day> <at_time>? | <specific_time> | <time>
 
-        at_time_on -> ("at")? <time> ("on")?
+    at_time_on -> ("at")? <time> ("on")?
 
-        some_day => <specific_day> | <relative_day>
+    some_day => <specific_day> | <relative_day>
 
-        specific_day => <adverb> | <date_with_year>
+    specific_day => <adverb> | <date_with_year>
 
-        date_with_year => <n_date> | <a_date>
+    date_with_year => <n_date> | <a_date>
 
-        n_date -> <year>    r("[./-]") <n_month> r("[./-]") <n_day>
-        n_date -> <year>    r("[./-]") <n_day>   r("[./-]") <n_month>
-        n_date -> <n_month> r("[./-]") <n_day>   r("[./-]") <year>
-        n_date -> <n_day>   r("[./-]") <n_month> r("[./-]") <year>
+    n_date -> <year>    r("[./-]") <n_month> r("[./-]") <n_day>
+    n_date -> <year>    r("[./-]") <n_day>   r("[./-]") <n_month>
+    n_date -> <n_month> r("[./-]") <n_day>   r("[./-]") <year>
+    n_date -> <n_day>   r("[./-]") <n_month> r("[./-]") <year>
 
-        a_date -> <day_prefix>? <a_month> <o_n_day> (",") <year>
-        a_date -> <day_prefix>? <n_day> <a_month> <year>
-        a_date -> <day_prefix>? ("the") <o_day> ("of") <a_month> <year>
+    a_date -> <day_prefix>? <a_month> <o_n_day> (",") <year>
+    a_date -> <day_prefix>? <n_day> <a_month> <year>
+    a_date -> <day_prefix>? ("the") <o_day> ("of") <a_month> <year>
 
-        day_prefix => <a_day> (",")?
+    day_prefix => <a_day> (",")?
 
-        relative_day => <a_day> | <a_day_in_month>
+    relative_day => <a_day> | <a_day_in_month>
 
-        at_time -> ("at") <time>
+    at_time -> ("at") <time>
 
-        specific_time => <first_time> | <last_time> | <precise_time>
+    specific_time => <first_time> | <last_time> | <precise_time>
 
-        precise_time -> <n_date> <hour_24>
+    precise_time -> <n_date> <hour_24>
 
-        time -> <hour_12> <am_pm>? | <hour_24> | <named_time>
+    time -> <hour_12> <am_pm>? | <hour_24> | <named_time>
 
-        hour_12 => <h12>
-        hour_12 => <h12> (":") <minute>
-        hour_12 => <h12> (":") <minute> (":") <second>
+    hour_12 => <h12>
+    hour_12 => <h12> (":") <minute>
+    hour_12 => <h12> (":") <minute> (":") <second>
 
-        hour_24 => <h24>
-        hour_24 => <h24> (":") <minute>
-        hour_24 => <h24> (":") <minute> (":") <second>
+    hour_24 => <h24>
+    hour_24 => <h24> (":") <minute>
+    hour_24 => <h24> (":") <minute> (":") <second>
 
-        a_day_in_month => <ordinal_day> | <day_and_month>
+    a_day_in_month => <ordinal_day> | <day_and_month>
 
-        ordinal_day   -> <day_prefix>? ("the") <o_day>    // the first
+    ordinal_day   -> <day_prefix>? ("the") <o_day>    // the first
 
-        o_day => <n_ordinal> | <a_ordinal> | <roman>
+    o_day => <n_ordinal> | <a_ordinal> | <roman>
 
-        day_and_month -> <n_month> r("[./-]") <n_day>     // 5-6
-        day_and_month -> <a_month> ("the")? <o_n_day>     // June 5, June 5th, June fifth, June the fifth
-        day_and_month -> ("the") <o_day> ("of") <a_month> // the 5th of June, the fifth of June
+    day_and_month -> <n_month> r("[./-]") <n_day>     // 5-6
+    day_and_month -> <a_month> ("the")? <o_n_day>     // June 5, June 5th, June fifth, June the fifth
+    day_and_month -> ("the") <o_day> ("of") <a_month> // the 5th of June, the fifth of June
 
-        o_n_day => <n_day> | <o_day>
+    o_n_day => <n_day> | <o_day>
 
-        // terminal patterns
-        // these are organized into single-line and multi-line patterns, with each group alphabetized
+    // terminal patterns
+    // these are organized into single-line and multi-line patterns, with each group alphabetized
 
-        // various phrases all meaning from the first measurable moment to the last
-        a_count         => [["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]]
-        adverb          => [["now", "today", "tomorrow", "yesterday"]]
-        am_pm           => (?-ib) [["am", "AM", "pm", "PM", "a.m.", "A.M.", "p.m.", "P.M."]]
-        bce             => (?-ib) [["bce", "b.c.e.", "bc", "b.c.", "BCE", "B.C.E.", "BC", "B.C."]]
-        beginning       => [["beginning", "start"]]
-        ce              => (?-ib) [["ce", "c.e.", "ad", "a.d.", "CE", "C.E.", "AD", "A.D."]]
-        direction       -> [["before", "after", "around", "before and after"]]
-        displacement    => [["week", "day", "hour", "minute", "second"]] ("s")?   // not handling variable-width periods like months or years
-        end             => ("end")
-        from_now_or_ago => [["from now", "ago"]]
-        h12             => (?-B) [(1..=12).into_iter().collect::<Vec<_>>()]
-        h24             => [(1..=24).into_iter().flat_map(|i| vec![format!("{}", i), format!("{:02}", i)]).collect::<Vec<_>>()]
-        minute          => (?-B) [ (0..60).into_iter().map(|i| format!("{:02}", i)).collect::<Vec<_>>() ]
-        modifier        => [["the", "this", "last", "next"]]
-        named_time      => [["noon", "midnight"]]
-        n_year          => r(r"\b(?:[1-9][0-9]{0,4}|0)\b")
-        roman           => [["nones", "ides", "kalends"]]
-        since           => [["since", "after"]]
-        unit            => [["week", "day", "hour", "minute", "second"]] ("s")?
-        universal       => [["always", "ever", "all time", "forever", "from beginning to end", "from the beginning to the end"]]
-        up_to           => [["to", "until", "up to", "till"]]
-        second          => (?-B) [ (0..60).into_iter().map(|i| format!("{:02}", i)).collect::<Vec<_>>() ]
-        suffix_year     => r(r"\b[1-9][0-9]{0,4}")
-        through         => [["up through", "through", "thru"]] | r("-+")
+    // various phrases all meaning from the first measurable moment to the last
+    a_count         => [["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]]
+    adverb          => [["now", "today", "tomorrow", "yesterday"]]
+    am_pm           => (?-ib) [["am", "AM", "pm", "PM", "a.m.", "A.M.", "p.m.", "P.M."]]
+    bce             => (?-ib) [["bce", "b.c.e.", "bc", "b.c.", "BCE", "B.C.E.", "BC", "B.C."]]
+    beginning       => [["beginning", "start"]]
+    ce              => (?-ib) [["ce", "c.e.", "ad", "a.d.", "CE", "C.E.", "AD", "A.D."]]
+    direction       -> [["before", "after", "around", "before and after"]]
+    displacement    => [["week", "day", "hour", "minute", "second"]] ("s")?   // not handling variable-width periods like months or years
+    end             => ("end")
+    from_now_or_ago => [["from now", "ago"]]
+    h12             => (?-B) [(1..=12).into_iter().collect::<Vec<_>>()]
+    h24             => [(1..=24).into_iter().flat_map(|i| vec![format!("{}", i), format!("{:02}", i)]).collect::<Vec<_>>()]
+    minute          => (?-B) [ (0..60).into_iter().map(|i| format!("{:02}", i)).collect::<Vec<_>>() ]
+    modifier        => [["the", "this", "last", "next"]]
+    named_time      => [["noon", "midnight"]]
+    n_year          => r(r"\b(?:[1-9][0-9]{0,4}|0)\b")
+    roman           => [["nones", "ides", "kalends"]]
+    since           => [["since", "after"]]
+    unit            => [["week", "day", "hour", "minute", "second"]] ("s")?
+    universal       => [["always", "ever", "all time", "forever", "from beginning to end", "from the beginning to the end"]]
+    up_to           => [["to", "until", "up to", "till"]]
+    second          => (?-B) [ (0..60).into_iter().map(|i| format!("{:02}", i)).collect::<Vec<_>>() ]
+    suffix_year     => r(r"\b[1-9][0-9]{0,4}")
+    through         => [["up through", "through", "thru"]] | r("-+")
 
-        a_day => (?-i) [["M", "T", "W", "R", "F", "S", "U"]]
-        a_day => [
-                "Sunday Monday Tuesday Wednesday Thursday Friday Saturday Tues Weds Thurs Tues. Weds. Thurs."
+    a_day => (?-i) [["M", "T", "W", "R", "F", "S", "U"]]
+    a_day => [
+            "Sunday Monday Tuesday Wednesday Thursday Friday Saturday Tues Weds Thurs Tues. Weds. Thurs."
+                .split(" ")
+                .into_iter()
+                .flat_map(|w| vec![
+                    w.to_string(),
+                    w[0..2].to_string(),
+                    w[0..3].to_string(),
+                    format!("{}.", w[0..2].to_string()),
+                    format!("{}.", w[0..3].to_string()),
+                ])
+                .collect::<Vec<_>>()
+        ]
+    a_month => [
+            "January February March April May June July August September October November December"
                     .split(" ")
                     .into_iter()
-                    .flat_map(|w| vec![
-                        w.to_string(),
-                        w[0..2].to_string(),
-                        w[0..3].to_string(),
-                        format!("{}.", w[0..2].to_string()),
-                        format!("{}.", w[0..3].to_string()),
-                    ])
+                    .flat_map(|w| vec![w.to_string(), w[0..3].to_string()])
                     .collect::<Vec<_>>()
-            ]
-        a_month => [
-                "January February March April May June July August September October November December"
-                     .split(" ")
-                     .into_iter()
-                     .flat_map(|w| vec![w.to_string(), w[0..3].to_string()])
-                     .collect::<Vec<_>>()
-            ]
-        a_ordinal => [[
-                "first",
-                "second",
-                "third",
-                "fourth",
-                "fifth",
-                "sixth",
-                "seventh",
-                "eighth",
-                "ninth",
-                "tenth",
-                "eleventh",
-                "twelfth",
-                "thirteenth",
-                "fourteenth",
-                "fifteenth",
-                "sixteenth",
-                "seventeenth",
-                "eighteenth",
-                "nineteenth",
-                "twentieth",
-                "twenty-first",
-                "twenty-second",
-                "twenty-third",
-                "twenty-fourth",
-                "twenty-fifth",
-                "twenty-sixth",
-                "twenty-seventh",
-                "twenty-eighth",
-                "twenty-ninth",
-                "thirtieth",
-                "thirty-first"
-            ]]
-        first_time => [[
-                "the beginning",
-                "the beginning of time",
-                "the first moment",
-                "the start",
-                "the very start",
-                "the first instant",
-                "the dawn of time",
-                "the big bang",
-                "the birth of the universe",
-            ]]
-        last_time => [[
-                "the end",
-                "the end of time",
-                "the very end",
-                "the last moment",
-                "eternity",
-                "infinity",
-                "doomsday",
-                "the crack of doom",
-                "armageddon",
-                "ragnarok",
-                "the big crunch",
-                "the heat death of the universe",
-                "doom",
-                "death",
-                "perdition",
-                "the last hurrah",
-                "ever after",
-                "the last syllable of recorded time",
-            ]]
-        n_day => [
-                (1..=31)
-                    .into_iter()
-                    .flat_map(|i| vec![i.to_string(), format!("{:02}", i)])
-                    .collect::<Vec<_>>()
-            ]
-        n_month => [
-                (1..=12)
-                    .into_iter()
-                    .flat_map(|i| vec![format!("{:02}", i), format!("{}", i)])
-                    .collect::<Vec<_>>()
-            ]
-        n_ordinal => [[
-                "1st",
-                "2nd",
-                "3rd",
-                "4th",
-                "5th",
-                "6th",
-                "7th",
-                "8th",
-                "9th",
-                "10th",
-                "11th",
-                "12th",
-                "13th",
-                "14th",
-                "15th",
-                "16th",
-                "17th",
-                "18th",
-                "19th",
-                "20th",
-                "21st",
-                "22nd",
-                "23rd",
-                "24th",
-                "25th",
-                "26th",
-                "27th",
-                "28th",
-                "29th",
-                "30th",
-                "31st",
-            ]]
-        short_year => [
-                (0..=99)
-                    .into_iter()
-                    .flat_map(|i| vec![format!("'{:02}", i), format!("{:02}", i)])
-                    .collect::<Vec<_>>()
-            ]
-    };
-}
+        ]
+    a_ordinal => [[
+            "first",
+            "second",
+            "third",
+            "fourth",
+            "fifth",
+            "sixth",
+            "seventh",
+            "eighth",
+            "ninth",
+            "tenth",
+            "eleventh",
+            "twelfth",
+            "thirteenth",
+            "fourteenth",
+            "fifteenth",
+            "sixteenth",
+            "seventeenth",
+            "eighteenth",
+            "nineteenth",
+            "twentieth",
+            "twenty-first",
+            "twenty-second",
+            "twenty-third",
+            "twenty-fourth",
+            "twenty-fifth",
+            "twenty-sixth",
+            "twenty-seventh",
+            "twenty-eighth",
+            "twenty-ninth",
+            "thirtieth",
+            "thirty-first"
+        ]]
+    first_time => [[
+            "the beginning",
+            "the beginning of time",
+            "the first moment",
+            "the start",
+            "the very start",
+            "the first instant",
+            "the dawn of time",
+            "the big bang",
+            "the birth of the universe",
+        ]]
+    last_time => [[
+            "the end",
+            "the end of time",
+            "the very end",
+            "the last moment",
+            "eternity",
+            "infinity",
+            "doomsday",
+            "the crack of doom",
+            "armageddon",
+            "ragnarok",
+            "the big crunch",
+            "the heat death of the universe",
+            "doom",
+            "death",
+            "perdition",
+            "the last hurrah",
+            "ever after",
+            "the last syllable of recorded time",
+        ]]
+    n_day => [
+            (1..=31)
+                .into_iter()
+                .flat_map(|i| vec![i.to_string(), format!("{:02}", i)])
+                .collect::<Vec<_>>()
+        ]
+    n_month => [
+            (1..=12)
+                .into_iter()
+                .flat_map(|i| vec![format!("{:02}", i), format!("{}", i)])
+                .collect::<Vec<_>>()
+        ]
+    n_ordinal => [[
+            "1st",
+            "2nd",
+            "3rd",
+            "4th",
+            "5th",
+            "6th",
+            "7th",
+            "8th",
+            "9th",
+            "10th",
+            "11th",
+            "12th",
+            "13th",
+            "14th",
+            "15th",
+            "16th",
+            "17th",
+            "18th",
+            "19th",
+            "20th",
+            "21st",
+            "22nd",
+            "23rd",
+            "24th",
+            "25th",
+            "26th",
+            "27th",
+            "28th",
+            "29th",
+            "30th",
+            "31st",
+        ]]
+    short_year => [
+            (0..=99)
+                .into_iter()
+                .flat_map(|i| vec![format!("'{:02}", i), format!("{:02}", i)])
+                .collect::<Vec<_>>()
+        ]
+}});
+
 // code generated via cargo run --bin serializer
 // this saves the cost of generating GRAMMAR
-lazy_static! {
-    #[doc(hidden)]
-    pub static ref MATCHER: Matcher = GRAMMAR.matcher().unwrap();
-}
-lazy_static! {
-    // making this public is useful for testing, but best to keep it hidden to
-    // limit complexity and commitment
-    #[doc(hidden)]
-    // this is a stripped-down version of GRAMMAR that just containst the most commonly used expressions
-    pub static ref SMALL_GRAMMAR: Grammar = grammar!{
-        (?ibBw)
+#[doc(hidden)]
+pub static MATCHER: LazyLock<Matcher> = LazyLock::new(|| { GRAMMAR.matcher().unwrap() });
 
-        TOP -> r(r"\A") <time_expression> r(r"\z")
+// making this public is useful for testing, but best to keep it hidden to
+// limit complexity and commitment
+#[doc(hidden)]
+// this is a stripped-down version of GRAMMAR that just containst the most commonly used expressions
+pub static SMALL_GRAMMAR: LazyLock<Grammar> = LazyLock::new(|| { grammar!{
+    (?ibBw)
 
-        // non-terminal patterns
-        // these are roughly ordered by dependency
+    TOP -> r(r"\A") <time_expression> r(r"\z")
 
-        time_expression => <particular>
+    // non-terminal patterns
+    // these are roughly ordered by dependency
 
-        particular => <one_time>
+    time_expression => <particular>
 
-        one_time => <moment_or_period>
+    particular => <one_time>
 
-        moment_or_period => <moment> | <period>
+    one_time => <moment_or_period>
 
-        period => <named_period> | <specific_period>
+    moment_or_period => <moment> | <period>
 
-        specific_period => <modified_period>
+    period => <named_period> | <specific_period>
 
-        modified_period -> <modifier>? <modifiable_period>
+    specific_period => <modified_period>
 
-        modifiable_period => [["week", "month", "year", "pay period", "pp"]] | <a_month> | <a_day>
+    modified_period -> <modifier>? <modifiable_period>
 
-        named_period => <a_day> | <a_month>
+    modifiable_period => [["week", "month", "year", "pay period", "pp"]] | <a_month> | <a_day>
 
-        moment -> <point_in_time>
+    named_period => <a_day> | <a_month>
 
-        point_in_time -> <some_day>
+    moment -> <point_in_time>
 
-        some_day => <specific_day> | <relative_day>
+    point_in_time -> <some_day>
 
-        specific_day => <adverb>
+    some_day => <specific_day> | <relative_day>
 
-        relative_day => <a_day>
+    specific_day => <adverb>
 
-        // terminal patterns
-        // these are organized into single-line and multi-line patterns, with each group alphabetized
+    relative_day => <a_day>
 
-        // various phrases all meaning from the first measurable moment to the last
-        adverb          => [["now", "today", "yesterday"]]
-        modifier        => [["the", "this", "last"]]
+    // terminal patterns
+    // these are organized into single-line and multi-line patterns, with each group alphabetized
 
-        a_day => [
-                "Sunday Monday Tuesday Wednesday Thursday Friday Saturday Tues Weds Thurs Tues. Weds. Thurs."
+    // various phrases all meaning from the first measurable moment to the last
+    adverb          => [["now", "today", "yesterday"]]
+    modifier        => [["the", "this", "last"]]
+
+    a_day => [
+            "Sunday Monday Tuesday Wednesday Thursday Friday Saturday Tues Weds Thurs Tues. Weds. Thurs."
+                .split(" ")
+                .into_iter()
+                .flat_map(|w| vec![
+                    w.to_string(),
+                    w[0..2].to_string(),
+                    w[0..3].to_string(),
+                    format!("{}.", w[0..2].to_string()),
+                    format!("{}.", w[0..3].to_string()),
+                ])
+                .collect::<Vec<_>>()
+        ]
+    a_month => [
+            "January February March April May June July August September October November December"
                     .split(" ")
                     .into_iter()
-                    .flat_map(|w| vec![
-                        w.to_string(),
-                        w[0..2].to_string(),
-                        w[0..3].to_string(),
-                        format!("{}.", w[0..2].to_string()),
-                        format!("{}.", w[0..3].to_string()),
-                    ])
+                    .flat_map(|w| vec![w.to_string(), w[0..3].to_string()])
                     .collect::<Vec<_>>()
-            ]
-        a_month => [
-                "January February March April May June July August September October November December"
-                     .split(" ")
-                     .into_iter()
-                     .flat_map(|w| vec![w.to_string(), w[0..3].to_string()])
-                     .collect::<Vec<_>>()
-            ]
-    };
-}
+        ]
+}});
+
 // code generated via cargo run --bin serializer
 // this saves the cost of generating GRAMMAR
-lazy_static! {
-    #[doc(hidden)]
-    pub static ref SMALL_MATCHER : Matcher = SMALL_GRAMMAR.matcher().unwrap();
-}
+#[doc(hidden)]
+pub static SMALL_MATCHER: LazyLock<Matcher> = LazyLock::new(|| { SMALL_GRAMMAR.matcher().unwrap() });
 
 /// Simply returns whether the given phrase is parsable as a time expression. This is slightly
 /// more efficient than `parse(expression, None).is_ok()` as no parse tree is generated.
@@ -595,8 +588,7 @@ lazy_static! {
 /// # Examples
 ///
 /// ```rust
-/// # extern crate two_timer;
-/// # use two_timer::{parsable};
+/// # use jiffy_two_timer::{parsable};
 /// let copacetic = parsable("5/6/69");
 /// ```
 pub fn parsable(phrase: &str) -> bool {
@@ -616,14 +608,13 @@ pub fn parsable(phrase: &str) -> bool {
 /// # Examples
 ///
 /// ```rust
-/// # extern crate two_timer;
-/// # use two_timer::{parse, Config};
+/// # use jiffy_two_timer::{parse, Config};
 /// let (reference_time, _, _) = parse("5/6/69", None).unwrap();
 /// ```
 pub fn parse(
     phrase: &str,
     config: Option<Config>,
-) -> Result<(NaiveDateTime, NaiveDateTime, bool), TimeError> {
+) -> Result<(civil::DateTime, civil::DateTime, bool), TimeError> {
     let parse = if cfg!(feature = "small_grammar") {
         SMALL_MATCHER
             .parse(phrase)
@@ -790,11 +781,11 @@ pub fn parse(
 /// of time expressions.
 #[derive(Debug, Clone)]
 pub struct Config {
-    now: NaiveDateTime,
+    now: civil::DateTime,
     monday_starts_week: bool,
     period: Period,
     pay_period_length: u32,
-    pay_period_start: Option<NaiveDate>,
+    pay_period_start: Option<civil::Date>,
     default_to_past: bool,
 }
 
@@ -802,7 +793,7 @@ impl Config {
     /// Constructs an expression with the default parameters.
     pub fn new() -> Config {
         Config {
-            now: Local::now().naive_local(),
+            now: Zoned::now().datetime(),
             monday_starts_week: true,
             period: Period::Minute,
             pay_period_length: 7,
@@ -812,7 +803,7 @@ impl Config {
     }
     /// Returns a copy of the configuration parameters with the "now" moment
     /// set to the parameter supplied.
-    pub fn now(&self, n: NaiveDateTime) -> Config {
+    pub fn now(&self, n: civil::DateTime) -> Config {
         let mut c = self.clone();
         c.now = n;
         c
@@ -843,7 +834,7 @@ impl Config {
     /// date for a pay period set to the parameter supplied. By default this date
     /// is undefined. Unless it is defined, expressions containing the phrase "pay period"
     /// or "pp" cannot be interpreted.
-    pub fn pay_period_start(&self, pay_period_start: Option<NaiveDate>) -> Config {
+    pub fn pay_period_start(&self, pay_period_start: Option<civil::Date>) -> Config {
         let mut c = self.clone();
         c.pay_period_start = pay_period_start;
         c
@@ -860,6 +851,7 @@ impl Config {
     }
 }
 
+// @todo Use thiserror!
 /// A simple categorization of things that could go wrong.
 ///
 /// Every error provides a descriptive string that can be displayed.
@@ -909,7 +901,7 @@ impl std::fmt::Display for TimeError {
 
 // for the end time, if the span is less than a day, use the first, otherwise use the second
 // e.g., Monday through Friday at 3 PM should end at 3 PM, but Monday through Friday should end at the end of Friday
-fn pick_terminus(d1: NaiveDateTime, d2: NaiveDateTime, through: bool) -> NaiveDateTime {
+fn pick_terminus(d1: civil::DateTime, d2: civil::DateTime, through: bool) -> civil::DateTime {
     if through {
         d2
     } else {
@@ -922,12 +914,11 @@ fn pick_terminus(d1: NaiveDateTime, d2: NaiveDateTime, through: bool) -> NaiveDa
 /// # Examples
 ///
 /// ```rust
-/// # extern crate two_timer;
-/// # use two_timer::first_moment;
+/// # use jiffy_two_timer::first_moment;
 /// println!("{}", first_moment()); // -262144-01-01 00:00:00
 /// ```
-pub fn first_moment() -> NaiveDateTime {
-    NaiveDate::MIN.and_hms_milli_opt(0, 0, 0, 0).unwrap()
+pub fn first_moment() -> civil::DateTime {
+    civil::DateTime::MIN
 }
 
 /// The moment regarded as the end of time.
@@ -935,28 +926,27 @@ pub fn first_moment() -> NaiveDateTime {
 /// # Examples
 ///
 /// ```rust
-/// # extern crate two_timer;
-/// # use two_timer::last_moment;
+/// # use jiffy_two_timer::last_moment;
 /// println!("{}", last_moment()); // +262143-12-31 23:59:59.999
 /// ```
-pub fn last_moment() -> NaiveDateTime {
-    NaiveDate::MAX.and_hms_milli_opt(23, 59, 59, 999).unwrap()
+pub fn last_moment() -> civil::DateTime {
+    civil::DateTime::MAX
 }
 
 fn specific(m: &Match) -> bool {
     m.has("specific_day") || m.has("specific_period") || m.has("specific_time")
 }
 
-fn n_date(date: &Match, config: &Config) -> Result<NaiveDate, TimeError> {
+fn n_date(date: &Match, config: &Config) -> Result<civil::Date, TimeError> {
     let year = year(date, config);
     let month = n_month(date);
     let day = n_day(date);
-    match NaiveDate::from_ymd_opt(year, month, day) {
-        None => Err(TimeError::ImpossibleDate(format!(
+    match civil::Date::new(year, month, day) {
+        Err(_e) => Err(TimeError::ImpossibleDate(format!(
             "cannot construct date with year {}, month {}, and day {}",
             year, month, day
         ))),
-        Some(d) => Ok(d),
+        Ok(d) => Ok(d),
     }
 }
 
@@ -1269,7 +1259,7 @@ impl PeriodModifier {
 fn handle_specific_time(
     moment: &Match,
     config: &Config,
-) -> Result<(NaiveDateTime, NaiveDateTime), TimeError> {
+) -> Result<(civil::DateTime, civil::DateTime), TimeError> {
     if let Some(moment) = moment.name("precise_time") {
         return match n_date(moment, config) {
             Err(s) => Err(s),
@@ -1290,7 +1280,7 @@ fn handle_specific_time(
 fn handle_one_time(
     moment: &Match,
     config: &Config,
-) -> Result<(NaiveDateTime, NaiveDateTime, bool), TimeError> {
+) -> Result<(civil::DateTime, civil::DateTime, bool), TimeError> {
     let r = if moment.has("specific_day") {
         handle_specific_day(moment, config)
     } else if let Some(moment) = moment.name("specific_period") {
@@ -1330,9 +1320,9 @@ fn moment_and_time(config: &Config, daytime: Option<&Match>) -> (NaiveDateTime, 
 fn relative_moment(
     m: &Match,
     config: &Config,
-    other_time: &NaiveDateTime,
+    other_time: &civil::DateTime,
     before: bool, // whether the time found should be before or after the reference time
-) -> Result<(NaiveDateTime, NaiveDateTime), TimeError> {
+) -> Result<(civil::DateTime, civil::DateTime), TimeError> {
     if let Some(a_month_and_a_day) = m.name("a_day_in_month") {
         return match month_and_a_day(a_month_and_a_day, config, other_time, before) {
             Ok(d) => Ok(moment_and_time(
@@ -1420,9 +1410,9 @@ fn relative_moment(
 fn month_and_a_day(
     m: &Match,
     config: &Config,
-    other_time: &NaiveDateTime,
+    other_time: &civil::DateTime,
     before: bool,
-) -> Result<NaiveDate, TimeError> {
+) -> Result<civil::Date, TimeError> {
     if m.has("ordinal_day") {
         let mut year = config.now.year();
         let mut month = other_time.month();
@@ -1434,7 +1424,7 @@ fn month_and_a_day(
         };
         // search backwards through the calendar for a possible day
         for _ in 0..4 * 7 * 12 {
-            if let Some(d) = NaiveDate::from_ymd_opt(year, month, day) {
+            if let Ok(d) = civil::Date::new(year, month, day) {
                 if wd.is_none() || d.weekday() == wd.unwrap() {
                     return Ok(d);
                 }
@@ -1474,9 +1464,9 @@ fn month_and_a_day(
             other_time.year()
         }
     };
-    match NaiveDate::from_ymd_opt(year, month, day) {
-        Some(d) => Ok(d),
-        None => Err(TimeError::ImpossibleDate(format!(
+    match civil::Date::new(year, month, day) {
+        Ok(d) => Ok(d),
+        Err(_e) => Err(TimeError::ImpossibleDate(format!(
             "could not construct date from {} with year {}, month {}, and day {}",
             m.as_str(),
             year,
@@ -1489,7 +1479,7 @@ fn month_and_a_day(
 fn specific_moment(
     m: &Match,
     config: &Config,
-) -> Result<(NaiveDateTime, NaiveDateTime), TimeError> {
+) -> Result<(civil::DateTime, civil::DateTime), TimeError> {
     if m.has("specific_day") {
         return handle_specific_day(m, config);
     }
@@ -1570,15 +1560,13 @@ fn time(m: &Match) -> (u32, u32, u32, bool) {
     }
 }
 
-fn n_month(m: &Match) -> u32 {
-    lazy_static! {
-        static ref MONTH: Regex = Regex::new(r"\A0?(\d{1,2})\z").unwrap();
-    }
+fn n_month(m: &Match) -> u8 {
+    static MONTH: LazyLock<Regex> = LazyLock::new(|| { Regex::new(r"\A0?(\d{1,2})\z").unwrap() });
     let cap = MONTH.captures(m.name("n_month").unwrap().as_str()).unwrap();
-    cap[1].parse::<u32>().unwrap()
+    cap[1].parse::<u8>().unwrap()
 }
 
-fn year(m: &Match, config: &Config) -> i32 {
+fn year(m: &Match, config: &Config) -> i16 {
     let year = m.name("year").unwrap();
     if let Some(sy) = year.name("short_year") {
         let y = s_to_n(sy.as_str()) as i32;
@@ -1618,14 +1606,12 @@ fn year(m: &Match, config: &Config) -> i32 {
 }
 
 fn s_to_n(s: &str) -> u32 {
-    lazy_static! {
-        static ref S_TO_N: Regex = Regex::new(r"\A[\D0]*(\d+)\z").unwrap();
-    }
+    static S_TO_N: LazyLock<Regex> = LazyLock::new(|| { Regex::new(r"\A[\D0]*(\d+)\z").unwrap() });
     S_TO_N.captures(s).unwrap()[1].parse::<u32>().unwrap()
 }
 
-fn n_day(m: &Match) -> u32 {
-    m.name("n_day").unwrap().as_str().parse::<u32>().unwrap()
+fn n_day(m: &Match) -> u8 {
+    m.name("n_day").unwrap().as_str().parse::<u8>().unwrap()
 }
 
 fn o_day(m: &Match, month: u32) -> u32 {
@@ -1754,10 +1740,10 @@ fn ordinal(s: &str) -> u32 {
 
 /// expand a moment to the period containing it
 fn moment_to_period(
-    now: NaiveDateTime,
+    now: civil::DateTime,
     period: &Period,
     config: &Config,
-) -> (NaiveDateTime, NaiveDateTime) {
+) -> (civil::DateTime, civil::DateTime) {
     match period {
         Period::Year => {
             let d1 = first_moment_of_day(now.year(), 1, 1);
@@ -1879,7 +1865,7 @@ fn weekday(s: &str) -> Weekday {
 }
 
 // adjust a period relative to another period -- e.g., "one week before June" or "five minutes around 12:00 PM"
-fn adjust(d1: NaiveDateTime, d2: NaiveDateTime, m: &Match) -> (NaiveDateTime, NaiveDateTime) {
+fn adjust(d1: civil::DateTime, d2: civil::DateTime, m: &Match) -> (civil::DateTime, civil::DateTime) {
     if let Some(adjustment) = m.name("adjustment") {
         let count = count(adjustment.name("count").unwrap()) as i64;
         let unit = match adjustment
@@ -1953,23 +1939,21 @@ fn count(m: &Match) -> u32 {
     }
 }
 
-fn first_moment_of_day(year: i32, month: u32, day: u32) -> NaiveDateTime {
-    NaiveDate::from_ymd_opt(year, month, day)
+fn first_moment_of_day(year: i16, month: i8, day: i8) -> civil::DateTime {
+    civil::Date::new(year, month, day)
         .unwrap()
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
+        .at(0, 0, 0)
 }
 
 fn precise_moment(
-    year: i32,
-    month: u32,
-    day: u32,
-    hour: u32,
-    minute: u32,
-    second: u32,
-) -> NaiveDateTime {
-    NaiveDate::from_ymd_opt(year, month, day)
+    year: i16,
+    month: i8,
+    day: i8,
+    hour: i8,
+    minute: i8,
+    second: i8,
+) -> civil::DateTime {
+    civil::Date::new(year, month, day)
         .unwrap()
-        .and_hms_opt(hour, minute, second)
-        .unwrap()
+        .at(hour, minute, second)
 }

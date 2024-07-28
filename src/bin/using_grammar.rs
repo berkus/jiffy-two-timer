@@ -1,6 +1,6 @@
-extern crate two_timer;
+use jiffy_two_timer::GRAMMAR;
 
 // for timing the cost savings of using a serialized matcher
 fn main() {
-    two_timer::GRAMMAR.matcher().unwrap().parse("yesterday");
+    GRAMMAR.matcher().unwrap().parse("yesterday");
 }
